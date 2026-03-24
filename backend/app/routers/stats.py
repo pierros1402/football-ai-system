@@ -1,5 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from app.services.browser_client import fetch_safely
+from app.services.normalizer import normalize_full_match
+
 import time
 
 router = APIRouter(prefix="/stats", tags=["Stats"])
@@ -154,3 +156,11 @@ def get_full_match_data(match_id: int):
         "momentum": momentum.get("momentum") if momentum else None,
         "graph": graph.get("graphPoints") if graph else None,
     }
+# -----------------------------
+# NORMALIZED MATCH DATA ENDPOINT
+# -----------------------------
+@router.get("/normalized/{match_id}")
+def get_normalized_match(match_id: int):
+    full = get_full_match_data(match_id)
+    normalized = normalize_full_match(full)
+    return normalized
