@@ -11,6 +11,7 @@ from ..utils.security import (
     create_access_token,
     create_refresh_token,
 )
+from ..auth.dependencies import get_current_user, decode_token
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
@@ -68,5 +69,33 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     return {
         "access_token": access_token,
         "refresh_token": refresh_token,
+        "token_type": "bearer",
+    }
+
+
+# GET CURRENT USER
+@router.get("/me", response_model=UserRead)
+def get_me(current_user: User = Depends(get_current_user)):
+    return current_user
+
+
+# REFRESH TOKEN
+@router.post("/refresh")
+def refresh(refresh_token: str, db: Session = Depends(get_db)):
+    try:
+        user_id = decode_token(refresh_token)
+    except:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+    user = db.query(User).filter(User.id == int(user_id)).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    new_access = create_access_token({"sub": str(user.id)})
+    new_refresh = create_refresh_token({"sub": str(user.id)})
+
+    return {
+        "access_token": new_access,
+        "refresh_token": new_refresh,
         "token_type": "bearer",
     }
