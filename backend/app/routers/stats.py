@@ -14,6 +14,7 @@ def fetch(endpoint: str):
 
 @router.get("/full/{match_id}")
 def get_full_match_data(match_id: int):
+    print("URL:", f"{API_BASE}/{match_id}")
 
     # 1️⃣ Event info
     event = fetch(f"{match_id}")
