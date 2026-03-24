@@ -1,20 +1,17 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from functools import lru_cache
+from pydantic_settings import BaseSettings
+
 
 class Settings(BaseSettings):
-    DATABASE_URL: str
-    SENDGRID_API_KEY: str
-    EMAIL_FROM: str
-    SECRET_KEY: str = "supersecretkey"
-    ALGORITHM: str = "HS256"   # <── ΠΡΟΣΘΕΣΕ ΑΥΤΟ
+    app_name: str = "Football AI System"
+    debug: bool = True
 
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8"
-    )
+    database_url: str = "postgresql+psycopg2://postgres:postgres@localhost:5432/football_ai_db"
+    jwt_secret_key: str = "CHANGE_ME"
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 30
 
-@lru_cache()
-def get_settings():
-    return Settings()
+    class Config:
+        env_file = ".env"
 
-settings = get_settings()
+
+settings = Settings()
