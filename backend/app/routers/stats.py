@@ -7,7 +7,10 @@ API_BASE = "https://api.sofascore.com/api/v1/event"
 
 def fetch(endpoint: str):
     url = f"{API_BASE}/{endpoint}"
+    print("REQUESTING:", url)
     r = requests.get(url, timeout=10)
+    print("STATUS:", r.status_code)
+    print("TEXT:", r.text[:200])
     if r.status_code != 200:
         return None
     return r.json()
