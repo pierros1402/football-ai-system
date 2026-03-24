@@ -5,9 +5,16 @@ router = APIRouter(prefix="/stats", tags=["Stats"])
 
 BASE = "https://api.sofascore.com/api/v1/event"
 
+HEADERS = {
+    "User-Agent": "Mozilla/5.0",
+    "Accept": "application/json",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Connection": "keep-alive"
+}
+
 def fetch(url: str):
     try:
-        r = requests.get(url, timeout=5)
+        r = requests.get(url, headers=HEADERS, timeout=5)
         if r.status_code == 200:
             return r.json()
         return None
@@ -23,8 +30,6 @@ def get_full_match_data(match_id: int):
 
     timeline = fetch(f"{BASE}/{match_id}/timeline")
     incidents = fetch(f"{BASE}/{match_id}/incidents")
-
-    # advanced endpoints (may return None)
     statistics = fetch(f"{BASE}/{match_id}/statistics")
     momentum = fetch(f"{BASE}/{match_id}/momentum")
     graph = fetch(f"{BASE}/{match_id}/graph")
