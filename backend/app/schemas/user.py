@@ -1,14 +1,18 @@
 from pydantic import BaseModel, EmailStr
 
 
-class UserCreate(BaseModel):
+class UserBase(BaseModel):
     email: EmailStr
+    username: str
+
+
+class UserCreate(UserBase):
     password: str
 
 
-class UserResponse(BaseModel):
+class UserRead(UserBase):
     id: int
-    email: EmailStr
+    is_admin: bool
 
     class Config:
-        from_attributes = True
+        orm_mode = True
