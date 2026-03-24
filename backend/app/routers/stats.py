@@ -6,11 +6,15 @@ router = APIRouter(prefix="/stats", tags=["Stats"])
 BASE = "https://api.sofascore.com/api/v1/event"
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0",
-    "Accept": "application/json",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
     "Accept-Language": "en-US,en;q=0.9",
+    "Origin": "https://www.sofascore.com",
+    "Referer": "https://www.sofascore.com/",
     "Connection": "keep-alive"
 }
+
 
 def fetch(url: str):
     try:
@@ -20,6 +24,7 @@ def fetch(url: str):
         return None
     except:
         return None
+
 
 @router.get("/full/{match_id}")
 def get_full_match_data(match_id: int):
