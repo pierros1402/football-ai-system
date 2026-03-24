@@ -7,13 +7,19 @@ API_BASE = "https://api.sofascore.com/api/v1/event"
 
 def fetch(endpoint: str):
     url = f"{API_BASE}/{endpoint}"
-    print("REQUESTING:", url)
-    r = requests.get(url, timeout=10)
-    print("STATUS:", r.status_code)
-    print("TEXT:", r.text[:200])
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Origin": "https://www.sofascore.com",
+        "Referer": "https://www.sofascore.com/",
+    }
+    r = requests.get(url, headers=headers, timeout=10)
     if r.status_code != 200:
+        print("FAILED:", r.status_code, r.text[:200])
         return None
     return r.json()
+
 
 @router.get("/full/{match_id}")
 def get_full_match_data(match_id: int):
