@@ -5,18 +5,7 @@ router = APIRouter(prefix="/stats", tags=["Stats"])
 
 BASE = "https://api.sofascore.com/api/v1/event"
 
-ENDPOINTS = {
-    "summary": "",
-    "timeline": "timeline",
-    "incidents": "incidents",
-    "statistics": "statistics",
-    "lineups": "lineups",
-    "momentum": "momentum",
-    "graph": "graph"
-}
-
 def fetch(url: str):
-    """Helper to fetch Sofascore data safely."""
     try:
         r = requests.get(url, timeout=5)
         if r.status_code == 200:
@@ -25,21 +14,29 @@ def fetch(url: str):
     except:
         return None
 
-
 @router.get("/full/{match_id}")
 def get_full_match_data(match_id: int):
-    result = {}
+    summary = fetch(f"{BASE}/{match_id}")
 
-    for key, endpoint in ENDPOINTS.items():
-        url = f"{BASE}/{match_id}/{endpoint}" if endpoint else f"{BASE}/{match_id}"
-        data = fetch(url)
-        result[key] = data  # μπορεί να είναι None, και αυτό είναι ΟΚ
-
-    # Αν ΟΛΑ είναι None → το match δεν υπάρχει
-    if all(v is None for v in result.values()):
+    if summary is None:
         raise HTTPException(status_code=404, detail="Match not found")
+
+    timeline = fetch(f"{BASE}/{match_id}/timeline")
+    incidents = fetch(f"{BASE}/{match_id}/incidents")
+
+    # advanced endpoints (may return None)
+    statistics = fetch(f"{BASE}/{match_id}/statistics")
+    momentum = fetch(f"{BASE}/{match_id}/momentum")
+    graph = fetch(f"{BASE}/{match_id}/graph")
+    lineups = fetch(f"{BASE}/{match_id}/lineups")
 
     return {
         "match_id": match_id,
-        "data": result
+        "summary": summary,
+        "timeline": timeline,
+        "incidents": incidents,
+        "statistics": statistics,
+        "momentum": momentum,
+        "graph": graph,
+        "lineups": lineups
     }
