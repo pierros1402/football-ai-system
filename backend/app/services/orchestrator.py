@@ -1,55 +1,107 @@
+import logging
+import time
+import random
+
+from app.services.browser_client import BrowserClient
 from app.services.discovery import (
-    fetch_all_tournaments,
-    fetch_tournament_seasons,
-    get_current_or_upcoming_season
+    discover_leagues,
+    discover_seasons,
+    fetch_season_matches,
 )
-from app.services.league_fetcher import fetch_league_matches
 from app.services.collector import collect_matches
 
+logger = logging.getLogger(__name__)
 
-def collect_all_leagues():
-    tournaments = fetch_all_tournaments()
 
-    for t in tournaments:
-        tid = t["id"]
-        t_name = t["name"]
-        country = (t.get("category") or {}).get("name", "Unknown")
+# ---------------------------------------------------------
+# MAIN ORCHESTRATOR
+# ---------------------------------------------------------
 
-        print(f"\n=== LEAGUE: {t_name} ({country}) ===")
+def collect_all_world(years_back: int = 10):
+    """
+    Full world data collection:
+    - Discover all leagues (with filtering)
+    - Discover seasons (priority 25–26 + 10 years back)
+    - Fetch matches (finished + upcoming + playoffs)
+    - Normalize & store
+    """
 
-        # 1️⃣ Fetch seasons for this league
-        seasons = fetch_tournament_seasons(tid)
-        if not seasons:
-            print("No seasons found, skipping.")
-            continue
+    logger.info("🌍 Starting FULL WORLD DISCOVERY...")
 
-        # 2️⃣ Pick current or upcoming season
-        season = get_current_or_upcoming_season(seasons)
-        if not season:
-            print("No active/upcoming season, skipping.")
-            continue
+    leagues = discover_leagues()
+    logger.info(f"🌍 Total valid leagues discovered: {len(leagues)}")
 
-        sid = season["id"]
-        s_name = season["name"]
+    with BrowserClient() as client:
+        for lg in leagues:
+            ut_id = lg["id"]
+            league_name = lg["name"]
+            country = lg["country"]
 
-        print(f"Using season: {s_name} (ID: {sid})")
+            logger.info(f"\n🏆 LEAGUE: {league_name} ({country})")
 
-        # 3️⃣ Fetch all match IDs (regular + playoff + playout + groups)
-        match_ids = fetch_league_matches(tid, sid)
-        if not match_ids:
-            print("No matches found, skipping.")
-            continue
+            # ---- Discover seasons ----
+            seasons = discover_seasons(client, ut_id, years_back=years_back)
+            logger.info(f"  → Seasons found: {len(seasons)}")
 
-        print(f"Found {len(match_ids)} matches.")
+            for s in seasons:
+                season_id = s["id"]
+                season_name = s["name"]
 
-        # 4️⃣ Collect normalized data
-        safe_league_name = t_name.replace("/", "-").replace(" ", "_")
-        safe_season_name = s_name.replace("/", "-").replace(" ", "_")
+                logger.info(f"    📅 Season: {season_name}")
 
-        collect_matches(
-            match_ids,
-            league_name=safe_league_name,
-            season_name=safe_season_name
-        )
+                # ---- Fetch matches ----
+                match_ids = fetch_season_matches(
+                    client,
+                    ut_id=ut_id,
+                    season_id=season_id,
+                    include_upcoming=True,
+                    include_finished=True,
+                )
 
-    print("\n=== DONE: All leagues processed ===")
+                logger.info(f"      → Matches: {len(match_ids)}")
+
+                # ---- Collect matches ----
+                collect_matches(match_ids, league_name, season_name)
+
+                # ---- Anti-bot throttling ----
+                time.sleep(random.uniform(0.8, 1.6))
+
+    logger.info("✅ WORLD COLLECTION COMPLETED.")
+
+
+# ---------------------------------------------------------
+# RUN SPECIFIC LEAGUE
+# ---------------------------------------------------------
+
+def collect_single_league(ut_id: int, years_back: int = 10):
+    """
+    Collects all seasons + matches for a single league.
+    """
+
+    with BrowserClient() as client:
+        ut = client.get_json(f"https://api.sofascore.com/api/v1/unique-tournament/{ut_id}")
+        league_name = ut["uniqueTournament"]["name"]
+
+        logger.info(f"🏆 SINGLE LEAGUE: {league_name}")
+
+        seasons = discover_seasons(client, ut_id, years_back=years_back)
+
+        for s in seasons:
+            season_id = s["id"]
+            season_name = s["name"]
+
+            logger.info(f"  📅 Season: {season_name}")
+
+            match_ids = fetch_season_matches(
+                client,
+                ut_id=ut_id,
+                season_id=season_id,
+                include_upcoming=True,
+                include_finished=True,
+            )
+
+            logger.info(f"    → Matches: {len(match_ids)}")
+
+            collect_matches(match_ids, league_name, season_name)
+
+            time.sleep(random.uniform(0.8, 1.6))
