@@ -17,6 +17,6 @@ logging.basicConfig(
 if __name__ == "__main__":
     logging.info("🚀 Starting FULL WORLD COLLECTION job...")
 
-    collect_all_world(years_back=10)
+    collect_all_world()
 
     logging.info("🏁 Job completed.")

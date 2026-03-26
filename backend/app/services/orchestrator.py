@@ -1,44 +1,66 @@
 import logging
 from app.services.browser_api import BrowserAPI
+from app.services.discover_countries_ssr import discover_all_countries
 from app.services.discovery import (
-    discover_leagues,
+    discover_tournaments_from_country,
     discover_seasons,
-    fetch_season_matches,
+    discover_matches,
 )
 
 logger = logging.getLogger(__name__)
 
 
-def collect_all_world(years_back: int = 10):
-    logger.info("🚀 Starting FULL WORLD COLLECTION job...")
+def collect_all_world():
+    logger.info("🚀 Starting FULL WORLD COLLECTION job (SSR mode)...")
 
     browser = BrowserAPI(headless=True)
 
     try:
-        logger.info("🌍 Starting FULL WORLD DISCOVERY...")
-        leagues = discover_leagues(browser)
+        # 1) ΟΛΕΣ οι χώρες
+        countries = discover_all_countries(browser)
+        logger.info(f"🌍 Total countries: {len(countries)}")
 
-        logger.info(f"🌍 Total valid leagues discovered: {len(leagues)}")
+        for country in countries:
+            country_slug = country.get("slug")
+            country_name = country.get("name")
 
-        for league in leagues:
-            ut_id = league["id"]
-            name = league["name"]
-            country = league["country"]
+            if not country_slug:
+                continue
 
-            logger.info(f"🔍 Discovering seasons for {name} ({country})...")
+            logger.info(f"\n🌍 COUNTRY: {country_name} ({country_slug})")
 
-            seasons = discover_seasons(browser, ut_id, years_back=years_back)
+            # 2) ΟΛΑ τα tournaments της χώρας
+            tournaments = discover_tournaments_from_country(browser, country_slug)
+            logger.info(f"📌 Found {len(tournaments)} tournaments in {country_name}")
 
-            for season in seasons:
-                season_id = season["id"]
-                season_name = season["name"]
+            for t in tournaments:
+                ut_id = t.get("id")
+                ut_slug = t.get("slug")
+                ut_name = t.get("name")
 
-                logger.info(f"⚽ Fetching matches for {name} - {season_name}...")
-                match_ids = fetch_season_matches(browser, ut_id, season_id)
+                if not ut_id or not ut_slug:
+                    continue
 
-                logger.info(f"📌 Found {len(match_ids)} matches for {name} - {season_name}")
+                logger.info(f"\n🏆 TOURNAMENT: {ut_name} ({ut_id})")
 
-        logger.info("✅ WORLD COLLECTION COMPLETED.")
+                # 3) ΟΛΕΣ οι seasons
+                seasons = discover_seasons(browser, ut_slug, ut_id)
+                logger.info(f"📅 Seasons found: {len(seasons)}")
+
+                for s in seasons:
+                    season_id = s.get("id")
+                    season_name = s.get("name")
+
+                    if not season_id:
+                        continue
+
+                    logger.info(f"⚽ SEASON: {season_name} ({season_id})")
+
+                    # 4) ΟΛΑ τα matches
+                    matches = discover_matches(browser, ut_slug, ut_id, season_id)
+                    logger.info(f"📌 Matches found: {len(matches)}")
+
+        logger.info("\n✅ WORLD COLLECTION COMPLETED (SSR).")
 
     finally:
         browser.close()
