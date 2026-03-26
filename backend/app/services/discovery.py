@@ -1,6 +1,9 @@
 import logging
+import json
+import time
 from typing import List, Dict, Any
-from app.services.browser_client import BrowserClient
+
+from app.services.browser_api import BrowserAPI
 
 logger = logging.getLogger(__name__)
 
@@ -15,9 +18,7 @@ UEFA_COUNTRIES = {
     "ES","FI","FO","FR","GE","GI","GR","HR","HU","IE","IS","IT","KZ","LI","LT",
     "LU","LV","MC","MD","ME","MK","MT","NL","NO","PL","PT","RO","RS","RU","SE",
     "SI","SK","SM","TR","UA",
-    # UK subdivisions
     "GB-ENG","GB-SCT","GB-WLS","GB-NIR",
-    # Israel (UEFA member)
     "IL"
 }
 
@@ -66,101 +67,155 @@ def is_top_international(name: str) -> bool:
 
 
 # ---------------------------------------------------------
-# API HELPERS (your existing functions)
+# API HELPERS (Playwright-based)
 # ---------------------------------------------------------
 
-def fetch_unique_tournament(client: BrowserClient, ut_id: int):
+def fetch_unique_tournament(browser: BrowserAPI, ut_id: int):
     url = f"{BASE_API}/unique-tournament/{ut_id}"
     logger.info("REQUEST: %s", url)
-    return client.get_json(url)
+    return browser.get_json(url)
 
 
-def fetch_season_events(client: BrowserClient, ut_id: int, season_id: int = None):
+def fetch_season_events(browser: BrowserAPI, ut_id: int, season_id: int = None):
     if season_id is None:
-        ut = fetch_unique_tournament(client, ut_id)
+        ut = fetch_unique_tournament(browser, ut_id)
         season_id = ut["uniqueTournament"]["currentSeason"]["id"]
 
     url = f"{BASE_API}/unique-tournament/{ut_id}/season/{season_id}/events"
     logger.info("REQUEST: %s", url)
-    data = client.get_json(url)
+    data = browser.get_json(url)
     return data.get("events", [])
 
 
 # ---------------------------------------------------------
-# DISCOVER ALL LEAGUES (MAIN FUNCTION)
+# DISCOVER ALL LEAGUES (NETWORK INTERCEPT)
 # ---------------------------------------------------------
 
-def discover_leagues() -> List[Dict[str, Any]]:
-    """
-    Επιστρέφει όλες τις διοργανώσεις που θέλουμε:
-    - UEFA 55 χώρες → full depth
-    - Εκτός UEFA → κόβουμε low tiers
-    - Youth → κόβεται παντού
-    - Regional cups → κόβονται παντού
-    - International → κρατάμε μόνο top
-    """
-
+def discover_leagues(browser: BrowserAPI) -> List[Dict[str, Any]]:
     url = f"{BASE_API}/sport/football/categories"
     logger.info("REQUEST: %s", url)
 
-    with BrowserClient() as client:
-        data = client.get_json(url)
-
+    data = browser.get_json(url)
     categories = data.get("categories", [])
-    leagues = []
+    leagues: List[Dict[str, Any]] = []
+    seen_ids = set()
 
     for cat in categories:
-        country = cat.get("country", {})
-        alpha2 = country.get("alpha2", "")
-        tournaments = cat.get("tournaments", [])
+        slug = cat.get("slug")
+        alpha2 = cat.get("alpha2", "")
+        if not slug:
+            continue
 
-        for t in tournaments:
-            name = t.get("name", "")
-            ut = t.get("uniqueTournament", {})
-            ut_id = ut.get("id")
-            ut_name = ut.get("name", "")
+        page_url = f"https://www.sofascore.com/football/{slug}"
+        logger.info("HTML REQUEST: %s", page_url)
 
-            # Youth → skip
-            if is_youth(name) or is_youth(ut_name):
+        captured: List[Dict[str, Any]] = []
+
+        def handle_response(response):
+            try:
+                url = response.url
+                if "tournament" not in url:
+                    return
+                # Μόνο JSON responses
+                ct = response.headers.get("content-type", "")
+                if "application/json" not in ct:
+                    return
+                data = response.json()
+                captured.append(data)
+            except Exception:
+                pass
+
+        browser.page.on("response", handle_response)
+
+        try:
+            browser.page.goto(page_url, timeout=15000, wait_until="domcontentloaded")
+        except Exception:
+            logger.warning(f"⚠️ Timeout loading {page_url}, skipping...")
+            browser.page.remove_listener("response", handle_response)
+            continue
+
+        # Δώσε χρόνο στο React να πυροδοτήσει τα AJAX calls
+        time.sleep(2.0)
+
+        browser.page.remove_listener("response", handle_response)
+
+        for resp in captured:
+            if not isinstance(resp, dict):
                 continue
 
-            # Regional cups → skip
-            if is_regional_cup(name) or is_regional_cup(ut_name):
-                continue
+            # Case 1: response με "tournaments": [...]
+            if "tournaments" in resp and isinstance(resp["tournaments"], list):
+                for t in resp["tournaments"]:
+                    ut = t.get("uniqueTournament", {})
+                    ut_id = ut.get("id")
+                    ut_name = ut.get("name", "")
+                    if not ut_id or not ut_name:
+                        continue
 
-            # International tournaments (no country)
-            if not alpha2:
-                if not is_top_international(name) and not is_top_international(ut_name):
+                    name_lower = ut_name.lower()
+
+                    if is_youth(name_lower):
+                        continue
+                    if is_regional_cup(name_lower):
+                        continue
+                    if not alpha2:
+                        if not is_top_international(name_lower):
+                            continue
+                    if alpha2 not in UEFA_COUNTRIES:
+                        if is_low_tier(name_lower):
+                            continue
+
+                    if ut_id in seen_ids:
+                        continue
+                    seen_ids.add(ut_id)
+
+                    leagues.append({
+                        "id": ut_id,
+                        "name": ut_name,
+                        "country": alpha2,
+                    })
+
+            # Case 2: response με "uniqueTournament": {...}
+            if "uniqueTournament" in resp and isinstance(resp["uniqueTournament"], dict):
+                ut = resp["uniqueTournament"]
+                ut_id = ut.get("id")
+                ut_name = ut.get("name", "")
+                if not ut_id or not ut_name:
                     continue
 
-            # Low tiers → skip ONLY outside UEFA
-            if alpha2 not in UEFA_COUNTRIES:
-                if is_low_tier(name) or is_low_tier(ut_name):
+                name_lower = ut_name.lower()
+
+                if is_youth(name_lower):
                     continue
+                if is_regional_cup(name_lower):
+                    continue
+                if not alpha2:
+                    if not is_top_international(name_lower):
+                        continue
+                if alpha2 not in UEFA_COUNTRIES:
+                    if is_low_tier(name_lower):
+                        continue
 
-            # Valid league
-            leagues.append({
-                "id": ut_id,
-                "name": ut_name or name,
-                "country": alpha2,
-            })
+                if ut_id in seen_ids:
+                    continue
+                seen_ids.add(ut_id)
 
+                leagues.append({
+                    "id": ut_id,
+                    "name": ut_name,
+                    "country": alpha2,
+                })
+
+    logger.info("🌍 Total valid leagues discovered: %d", len(leagues))
     return leagues
 
-# ---------------------------------------------------------
-# DISCOVER SEASONS (MAIN FUNCTION)
-# ---------------------------------------------------------
-def discover_seasons(client: BrowserClient, ut_id: int, years_back: int = 10):
-    """
-    Επιστρέφει τις σεζόν ενός unique tournament (ut_id) με τους εξής περιορισμούς:
-    - Youth seasons → κόβονται
-    - Τοπικά/περιφερειακά κύπελλα → κόβονται
-    - Μικρές κατηγορίες εκτός Ευρώπης → κόβονται (handled already in discover_leagues)
-    - Σεζόν 25–26 → προτεραιότητα
-    - Ιστορικό 5–10 χρόνια → μέσα
-    """
 
-    ut = fetch_unique_tournament(client, ut_id)
+# ---------------------------------------------------------
+# DISCOVER SEASONS
+# ---------------------------------------------------------
+
+def discover_seasons(browser: BrowserAPI, ut_id: int, years_back: int = 10):
+    ut = fetch_unique_tournament(browser, ut_id)
     seasons = ut["uniqueTournament"].get("seasons", [])
 
     valid_seasons = []
@@ -170,15 +225,12 @@ def discover_seasons(client: BrowserClient, ut_id: int, years_back: int = 10):
         season_name = s.get("name", "").lower()
         season_id = s.get("id")
 
-        # Youth seasons → skip
         if is_youth(season_name):
             continue
 
-        # Τοπικά κύπελλα → skip (αν υπάρχουν στο όνομα)
         if is_regional_cup(season_name):
             continue
 
-        # Προτεραιότητα: 25–26
         if "25/26" in season_name or "2025" in season_name:
             priority_seasons.append({
                 "id": season_id,
@@ -187,92 +239,71 @@ def discover_seasons(client: BrowserClient, ut_id: int, years_back: int = 10):
             })
             continue
 
-        # Ιστορικό 5–10 χρόνια
-        # Το Sofascore δίνει year ως string "2021", "2022", "24/25" κτλ.
         year_str = s.get("year") or s.get("name")
         if not year_str:
             continue
 
-        # Extract numeric year safely
         digits = "".join(ch for ch in year_str if ch.isdigit())
         if len(digits) >= 4:
             year = int(digits[:4])
         else:
             continue
 
-        if 2015 <= year <= 2025:  # 10 χρόνια πίσω
+        if 2015 <= year <= 2025:
             valid_seasons.append({
                 "id": season_id,
                 "name": s.get("name"),
                 "year": s.get("year"),
             })
 
-    # Βάζουμε πρώτα την 25–26
     return priority_seasons + valid_seasons
 
 
 # ---------------------------------------------------------
-# DISCOVER SEASON MATCHES (MAIN FUNCTION)
+# DISCOVER MATCHES
 # ---------------------------------------------------------
+
 def fetch_season_matches(
-    client: BrowserClient,
+    browser: BrowserAPI,
     ut_id: int,
     season_id: int,
     include_upcoming: bool = True,
     include_finished: bool = True
 ) -> List[int]:
-    """
-    Επιστρέφει ΟΛΑ τα match_ids μιας σεζόν, με πλήρη υποστήριξη:
-    - Finished matches
-    - Upcoming matches
-    - Playoffs / Playouts / Μπαράζ
-    - Knockout rounds
-    - Qualification rounds
-    - Χωρίς youth, regional cups, low tiers (έχουν ήδη κοπεί στο discovery)
-    """
 
-    events = fetch_season_events(client, ut_id, season_id)
+    events = fetch_season_events(browser, ut_id, season_id)
     match_ids = []
 
     for e in events:
         status = e.get("status", {})
         status_type = status.get("type", "").lower()
-        status_code = status.get("code")
 
-        # Youth events → skip
         name = e.get("tournament", {}).get("name", "")
         if is_youth(name):
             continue
 
-        # Regional cups → skip
         if is_regional_cup(name):
             continue
 
-        # Finished matches
         if include_finished and status_type == "finished":
             match_ids.append(e["id"])
             continue
 
-        # Upcoming matches
         if include_upcoming and status_type in ["notstarted", "inprogress"]:
             match_ids.append(e["id"])
             continue
 
-        # Knockout / playoffs / qualifiers
         round_info = e.get("roundInfo", {})
         cup_type = round_info.get("cupRoundType")
 
         if cup_type is not None:
-            # Είναι knockout round → πάντα μέσα
             match_ids.append(e["id"])
             continue
 
-        # Qualification rounds (π.χ. Champions League qualifiers)
         if "qualification" in round_info.get("slug", "").lower():
             match_ids.append(e["id"])
             continue
 
-        # Playoffs / Playouts
         if "playoff" in round_info.get("name", "").lower():
             match_ids.append(e["id"])
             continue

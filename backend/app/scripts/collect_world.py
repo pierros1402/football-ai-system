@@ -1,5 +1,12 @@
+import sys
+import os
 import logging
-import time
+
+# ---------------------------------------------------------
+# Force Python to load ONLY the correct backend
+# ---------------------------------------------------------
+sys.path.insert(0, "C:/projects/football-ai-system/backend")
+
 from app.services.orchestrator import collect_all_world
 
 logging.basicConfig(
@@ -10,7 +17,6 @@ logging.basicConfig(
 if __name__ == "__main__":
     logging.info("🚀 Starting FULL WORLD COLLECTION job...")
 
-    # Full world discovery + collection
     collect_all_world(years_back=10)
 
     logging.info("🏁 Job completed.")
