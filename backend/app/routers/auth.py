@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from fastapi.security import OAuth2PasswordRequestForm
 
 from ..database import get_db
-from ..models.user import User
+from app.user import User
 from ..schemas.user import UserCreate, UserRead
 from ..utils.security import (
     hash_password,
